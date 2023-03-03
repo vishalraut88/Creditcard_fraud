@@ -1,0 +1,86 @@
+X_train_feature_selection, accepted_columns = filter_out_features_based_on_statistical_approach(X_train[X_train.select_dtypes(exclude=['string', 'datetime']).columns.union(['status'])], y_train, disallowed_columns=get_disallowed_columns())
+X_val_feature_selection = X_val.copy(deep=True)
+X_train_feature_selection.drop(columns="txcty", inplace=True, errors='ignore')
+X_val_feature_selection.drop(columns="txcty", inplace=True, errors='ignore')
+
+
+params_scope = {
+    'learning_rate': hp.uniform('learning_rate', 0.00001, 0.1),
+    'num_leaves': hp.quniform('num_leaves', 2, 15, 1),
+    'n_estimators': hp.quniform('n_estimators', 1, 100, 1),
+    'scale_pos_weight': hp.quniform('scale_pos_weight', 10, 200, 1),
+    #'reg_alpha': hp.uniform('reg_alpha', 0.00, 10.0),
+    'reg_lambda ': hp.uniform('reg_lambda', 10.00, 100.0),
+    'pos_bagging_fraction': hp.uniform('pos_bagging_fraction', 0.0, 1.0),
+    'max_bin': hp.quniform('max_bin', 16, 256, 16)
+}
+
+
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    initial_params = initial_hyperparam_search(X_train_feature_selection, y_train, X_val_feature_selection[X_train_feature_selection.columns], y_val, params_scope)
+
+
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    to_keep, n_features, scores_per_features = perform_rfe(
+        X_train_feature_selection,
+        y_train,
+        X_val_feature_selection[X_train_feature_selection.columns],
+        y_val,
+        cast_params_to_proper_types(initial_params),
+        minimal_importance=0.01,
+        minimal_amount_of_features_to_keep=10,
+        n_repeats=15,
+    )
+
+
+####Model training
+
+
+params_scope = {
+    'learning_rate': hp.uniform('learning_rate', 0.00001, 0.1),
+    'num_leaves': hp.quniform('num_leaves', 2, 15, 1),
+    'n_estimators': hp.quniform('n_estimators', 5, 200, 5),
+    'scale_pos_weight': hp.quniform('scale_pos_weight', 10, 100, 1),
+    #'reg_alpha': hp.uniform('reg_alpha', 10.00, 100.0),
+    'reg_lambda ': hp.uniform('reg_lambda', 10.00, 100.0),
+    'pos_bagging_fraction': hp.uniform('pos_bagging_fraction', 0.0, 1.0),
+    'max_bin': hp.quniform('max_bin', 16, 256, 16)
+}
+
+
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    fmin_objective = partial(
+        objective_under_validation_set,
+        x_tmp_train=X_train[to_keep],
+        y_tmp_train=y_train,
+        x_tmp_validation=X_val[to_keep],
+        y_tmp_validation=y_val
+    )
+    best = fmin(
+        fn=fmin_objective,
+        space=params_scope,
+        algo=tpe.suggest,
+        max_evals=200
+    )
+
+from pg_scripts.feature_selection import cast_params_to_proper_types_extended
+
+model = lgb.LGBMClassifier(
+    random_state=42,
+    verbose=-1,
+    objective='binary',
+    **cast_params_to_proper_types_extended(best)
+)
+model.fit(+
+    X_train[to_keep],
+    y_train,
+    eval_set=[(X_val[to_keep], y_val)],
+    verbose=1,
+    eval_metric=lgb_f1_score
+)
