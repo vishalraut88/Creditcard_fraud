@@ -14,7 +14,48 @@ from sklearn.metrics import f1_score
 
 import lightgbm as lgb
 
+class feature_importances:
+
+    def __init__(self):
+        pass
+
+    def filter_out_features_based_on_statistical_approach(self,
+            X_train_feature_selection,
+            disallowed_columns,
+            target_column = 'Class'
+    ):
+    #     X_train_feature_selection = x_train_tmp.copy(deep=True)
+        for col in X_train_feature_selection.columns:
+            if X_train_feature_selection[col].isna().sum() /\
+                    len(X_train_feature_selection) > 0.5:
+                if col not in disallowed_columns:
+                    disallowed_columns.append(col)
+        print("Removing columns: [" + ", ".join(disallowed_columns) + "]")
+        for column in disallowed_columns:
+            if column in X_train_feature_selection.columns:
+                X_train_feature_selection.drop(columns=[column], inplace=True)
+        assocs = associations(X_train_feature_selection, compute_only=True)
+        assoc_result = pd.DataFrame(assocs['corr'])
+        for col in assoc_result.columns:
+            assoc_result[col] = assoc_result[col].astype(float)
+            assoc_result[col] = round(assoc_result[col], 2)
+        assoc_result[target_column] = abs(assoc_result[target_column])
+        accepted_columns = []
+        midpoint = assoc_result[target_column].quantile(0.75)
+        for row in zip(X_train_feature_selection.columns, assoc_result[target_column]):
+            if row[1] > midpoint and row[0] not in disallowed_columns:
+                accepted_columns.append(row[0])
+        X_train_feature_selection = X_train_feature_selection[accepted_columns]
+        X_train_feature_selection = X_train_feature_selection.drop(
+            columns=[target_column]
+        )
+        return X_train_feature_selection, accepted_columns,assoc_result,disallowed_columns
+    
+    
+
+
 def cast_params_to_proper_types(params):
+
     return {
         'learning_rate': float(params['learning_rate']),
         'num_leaves': int(params['num_leaves']),
@@ -44,11 +85,6 @@ def objective(params, x_tmp_train, y_tmp_train):
     return 1 - score
 
 
-def lgb_f1_score(y_true, y_proba):
-    y_hat = np.where(y_proba < 0.5, 0, 1)  
-    return 'f1', f1_score(y_true, y_hat), True
-
-
 def objective_under_validation_set(
     params,
     x_tmp_train,
@@ -76,46 +112,18 @@ def objective_under_validation_set(
         )
 
 
-def filter_out_features_based_on_statistical_approach(
-        x_train_tmp,
-        y_train_tmp,
-        disallowed_columns
-):
-    X_train_feature_selection = x_train_tmp.copy(deep=True)
-    for col in X_train_feature_selection.columns:
-        if X_train_feature_selection[col].isna().sum() /\
-                len(X_train_feature_selection) > 0.5:
-            if col not in disallowed_columns:
-                disallowed_columns.append(col)
-    print("Removing columns: [" + ", ".join(disallowed_columns) + "]")
-    for column in disallowed_columns:
-        if column in X_train_feature_selection.columns:
-            X_train_feature_selection.drop(columns=[column], inplace=True)
-    assocs = associations(X_train_feature_selection, compute_only=True)
-    assoc_result = pd.DataFrame(assocs['corr'])
-    for col in assoc_result.columns:
-        assoc_result[col] = assoc_result[col].astype(float)
-        assoc_result[col] = round(assoc_result[col], 2)
-    assoc_result['status'] = abs(assoc_result['status'])
-    accepted_columns = []
-    midpoint = assoc_result['status'].quantile(0.75)
-    for row in zip(X_train_feature_selection.columns, assoc_result['status']):
-        if row[1] > midpoint and row[0] not in disallowed_columns:
-            accepted_columns.append(row[0])
-    X_train_feature_selection = X_train_feature_selection[accepted_columns]
-    X_train_feature_selection = X_train_feature_selection.drop(
-        columns=['status']
-    )
-    return X_train_feature_selection, accepted_columns
+def lgb_f1_score(y_true, y_proba):
+    y_hat = np.where(y_proba < 0.5, 0, 1)  
+    return 'f1', f1_score(y_true, y_hat), True
 
 
 def initial_hyperparam_search(
-    x_train_tmp,
-    y_train_tmp,
-    x_val_tmp,
-    y_val_tmp,
-    params_scope
-):
+x_train_tmp,
+y_train_tmp,
+x_val_tmp,
+y_val_tmp,
+params_scope):
+
     fmin_objective = partial(
         objective_under_validation_set,
         x_tmp_train=x_train_tmp,
@@ -142,6 +150,7 @@ def perform_rfe(
     minimal_amount_of_features_to_keep: int = 10,
     n_repeats: int = 10
 ):
+
     n_features = []
     scores_per_features = []
     while True:
