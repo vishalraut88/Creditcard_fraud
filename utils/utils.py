@@ -5,14 +5,16 @@ import pandas as pd
 import numpy as np
 
 from dython.nominal import associations
-
-from hyperopt import tpe
+from hyperopt import hp, tpe, Trials
 from hyperopt.fmin import fmin
 
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.metrics import f1_score
-
+import warnings
 import lightgbm as lgb
+# from typing import Dict
+# from dython.nominal import associations
+# from hyperopt import hp, tpe, Trials
 
 class feature_importances:
 
@@ -52,6 +54,29 @@ class feature_importances:
         return X_train_feature_selection, accepted_columns,assoc_result,disallowed_columns
     
     
+
+def feature_imp_lgbm(Xtrain,y_train,X_val,y_val,params_scope):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        
+        initial_params = initial_hyperparam_search(Xtrain, y_train, X_val[Xtrain.columns], y_val, params_scope)
+    
+    params = cast_params_to_proper_types(initial_params)
+    model = lgb.LGBMClassifier(
+            random_state=42,
+            verbose=-1,
+            objective='binary'
+            ,**params
+    )   
+    
+    model.fit(
+    Xtrain,
+    y_train,
+    eval_set=[(X_val[Xtrain.columns], y_val)],
+    verbose=0,
+    eval_metric=lgb_f1_score
+)
+    return model,initial_params
 
 
 def cast_params_to_proper_types(params):
